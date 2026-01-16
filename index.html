@@ -2862,96 +2862,471 @@
       openModal('Produto Encontrado', bodyHTML, footerHTML);
     }
     
-    // NFe Functions - REAL BARCODE SCANNING with Quagga.js
-    async function loadNFes() {
-      try {
-        const snapshot = await db.ref('nfes').once('value');
-        const nfes = snapshot.val() || {};
-        
-        allNFes = Object.keys(nfes).map(key => ({
-          id: key,
-          ...nfes[key]
-        })).sort((a, b) => b.dataHora - a.dataHora);
-        
-        renderNFes();
-      } catch (error) {
-        showToast('Erro ao carregar notas fiscais', 'error');
-      }
-    }
+  // NFe Functions - REAL BARCODE SCANNING com Quagga.js
+let barcodeScanner = null;
+let isScanning = false;
+
+async function loadNFes() {
+  try {
+    const snapshot = await db.ref('nfes').once('value');
+    const nfes = snapshot.val() || {};
     
-    function renderNFes() {
-      const list = document.getElementById('nfeList');
-      
-      if (allNFes.length === 0) {
-        list.innerHTML = '<p style="text-align: center; color: var(--text-muted); padding: 40px;">Nenhuma nota fiscal cadastrada</p>';
-        return;
-      }
-      
-      list.innerHTML = allNFes.map(nfe => `
-        <div class="nfe-card">
-          <div class="nfe-header">
-            <span class="nfe-number">NF-e: ${nfe.numero}</span>
-            <span class="nfe-date">${formatDate(nfe.dataHora)}</span>
-          </div>
-          <div class="nfe-details">
-            <div class="nfe-detail-item">
-              <span style="color: var(--text-muted);">Fornecedor:</span>
-              <span style="font-weight: 600;">${nfe.fornecedor}</span>
-            </div>
-            <div class="nfe-detail-item">
-              <span style="color: var(--text-muted);">Valor Total:</span>
-              <span style="font-weight: 700; color: var(--primary-mid);">${formatMoney(nfe.valorTotal)}</span>
-            </div>
-            <div class="nfe-detail-item">
-              <span style="color: var(--text-muted);">Itens:</span>
-              <span style="font-weight: 600;">${nfe.itens.length} produtos</span>
-            </div>
-          </div>
-          <div class="nfe-actions">
-            <button class="btn-small btn-info" onclick="viewNFeDetails('${nfe.id}')">
-              <i class="fas fa-eye"></i> Ver Detalhes
-            </button>
-            <button class="btn-small btn-warning" onclick="editNFe('${nfe.id}')">
-              <i class="fas fa-edit"></i> Editar
-            </button>
-            <button class="btn-small btn-danger" onclick="deleteNFe('${nfe.id}')">
-              <i class="fas fa-trash"></i> Excluir
-            </button>
-          </div>
-        </div>
-      `).join('');
-    }
+    allNFes = Object.keys(nfes).map(key => ({
+      id: key,
+      ...nfes[key]
+    })).sort((a, b) => new Date(b.dataHora) - new Date(a.dataHora));
     
-    function openNFeScanModal() {
-      const bodyHTML = `
-        <div style="background: #eff6ff; padding: 15px; border-radius: 10px; margin-bottom: 20px; border-left: 4px solid #3b82f6;">
-          <h4 style="font-size: 14px; font-weight: 700; margin-bottom: 8px; color: #1e40af;">
-            <i class="fas fa-info-circle"></i> Como usar?
-          </h4>
-          <p style="font-size: 13px; color: #475569; margin-bottom: 8px;">
-            • Aponte a câmera para o <strong>código de barras</strong> da chave NFe (44 dígitos)
-          </p>
-          <p style="font-size: 13px; color: #475569; margin-bottom: 8px;">
-            • O código será detectado <strong>automaticamente</strong>
-          </p>
-          <p style="font-size: 13px; color: #475569;">
-            • Você poderá <strong>editar os dados antes de salvar</strong>
-          </p>
+    renderNFes();
+  } catch (error) {
+    console.error('Erro ao carregar NFes:', error);
+    showToast('Erro ao carregar notas fiscais', 'error');
+  }
+}
+
+function renderNFes() {
+  const list = document.getElementById('nfeList');
+  
+  if (!list) return;
+  
+  if (allNFes.length === 0) {
+    list.innerHTML = '<p style="text-align: center; color: var(--text-muted); padding: 40px;">Nenhuma nota fiscal cadastrada</p>';
+    return;
+  }
+  
+  list.innerHTML = allNFes.map(nfe => `
+    <div class="nfe-card">
+      <div class="nfe-header">
+        <span class="nfe-number">NF-e: ${nfe.numero}</span>
+        <span class="nfe-date">${formatDate(nfe.dataHora)}</span>
+      </div>
+      <div class="nfe-details">
+        <div class="nfe-detail-item">
+          <span style="color: var(--text-muted);">Fornecedor:</span>
+          <span style="font-weight: 600;">${nfe.fornecedor}</span>
         </div>
-        <div class="camera-container" id="nfeCameraContainer">
-          <div id="barcodeReader" style="position: relative; width: 100%; max-width: 500px; margin: 0 auto;"></div>
+        <div class="nfe-detail-item">
+          <span style="color: var(--text-muted);">Valor Total:</span>
+          <span style="font-weight: 700; color: var(--primary-mid);">${formatMoney(nfe.valorTotal)}</span>
         </div>
-        <div id="barcodeResult" style="margin-top: 20px; text-align: center; min-height: 50px;"></div>
-      `;
+        <div class="nfe-detail-item">
+          <span style="color: var(--text-muted);">Itens:</span>
+          <span style="font-weight: 600;">${nfe.itens ? nfe.itens.length : 0} produtos</span>
+        </div>
+      </div>
+      <div class="nfe-actions">
+        <button class="btn-small btn-info" onclick="viewNFeDetails('${nfe.id}')">
+          <i class="fas fa-eye"></i> Ver Detalhes
+        </button>
+        <button class="btn-small btn-warning" onclick="editNFe('${nfe.id}')">
+          <i class="fas fa-edit"></i> Editar
+        </button>
+        <button class="btn-small btn-danger" onclick="deleteNFe('${nfe.id}')">
+          <i class="fas fa-trash"></i> Excluir
+        </button>
+      </div>
+    </div>
+  `).join('');
+}
+
+function openNFeScanModal() {
+  const bodyHTML = `
+    <div style="background: #eff6ff; padding: 15px; border-radius: 10px; margin-bottom: 20px; border-left: 4px solid #3b82f6;">
+      <h4 style="font-size: 14px; font-weight: 700; margin-bottom: 8px; color: #1e40af;">
+        <i class="fas fa-info-circle"></i> Como usar?
+      </h4>
+      <p style="font-size: 13px; color: #475569; margin-bottom: 8px;">
+        • Aponte a câmera para o <strong>código de barras</strong> da chave NFe (44 dígitos)
+      </p>
+      <p style="font-size: 13px; color: #475569; margin-bottom: 8px;">
+        • O código será detectado <strong>automaticamente</strong>
+      </p>
+      <p style="font-size: 13px; color: #475569;">
+        • Você poderá <strong>editar os dados antes de salvar</strong>
+      </p>
+    </div>
+    <div class="camera-container" style="width: 100%; position: relative;">
+      <video id="nfeVideo" style="width: 100%; max-width: 500px; height: 400px; background: #000; border-radius: 8px; display: block; margin: 0 auto;"></video>
+      <canvas id="nfeCanvas" style="display: none;"></canvas>
+    </div>
+    <div id="barcodeResult" style="margin-top: 20px; text-align: center; min-height: 50px; font-size: 14px; color: #64748b;">
+      Aguardando leitura...
+    </div>
+  `;
+  
+  const footerHTML = `
+    <button class="btn" onclick="stopNFeScanner(); closeModal();" style="background: #64748b; color: white;">Cancelar</button>
+  `;
+  
+  openModal('Escanear Código de Barras NFe', bodyHTML, footerHTML);
+  
+  setTimeout(() => startNFeScanner(), 500);
+}
+
+function startNFeScanner() {
+  if (isScanning) return;
+  isScanning = true;
+  
+  const video = document.getElementById('nfeVideo');
+  const canvas = document.getElementById('nfeCanvas');
+  const resultDiv = document.getElementById('barcodeResult');
+  
+  if (!video || !canvas) {
+    console.error('Elementos de vídeo não encontrados');
+    return;
+  }
+  
+  const constraints = {
+    video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
+    audio: false
+  };
+  
+  navigator.mediaDevices.getUserMedia(constraints)
+    .then(stream => {
+      video.srcObject = stream;
+      video.play();
       
-      const footerHTML = `
-        <button class="btn" onclick="stopBarcodeScanner(); closeModal();" style="background: #64748b; color: white;">Cancelar</button>
-      `;
+      resultDiv.innerHTML = '<span style="color: #059669;">✓ Câmera ativada - Posicione o código de barras</span>';
       
-      openModal('Escanear Código de Barras NFe', bodyHTML, footerHTML);
+      const ctx = canvas.getContext('2d');
+      let detectedCodes = new Set();
       
-      setTimeout(() => startBarcodeScanner(), 500);
-    }
+      const scanFrame = () => {
+        if (!isScanning) return;
+        
+        try {
+          canvas.width = video.videoWidth;
+          canvas.height = video.videoHeight;
+          ctx.drawImage(video, 0, 0);
+          
+          // Usar Quagga para detectar código de barras
+          if (window.Quagga) {
+            Quagga.decodeSingle({
+              src: canvas.toDataURL('image/png'),
+              numOfWorkers: 0,
+              inputStream: { type: 'ImageData' },
+              decoder: {
+                readers: ['code_128_reader', 'ean_reader', 'ean_8_reader']
+              }
+            }, (result) => {
+              if (result && result.codeResult && result.codeResult.code) {
+                const code = result.codeResult.code;
+                
+                // Validar se é uma chave NFe (44 dígitos)
+                if (code.length === 44 && /^\d+$/.test(code)) {
+                  if (!detectedCodes.has(code)) {
+                    detectedCodes.add(code);
+                    resultDiv.innerHTML = `<span style="color: #059669; font-weight: bold;">✓ Código detectado: ${code}</span>`;
+                    
+                    // Parar scanner e processar
+                    stopNFeScanner();
+                    processNFeBarcode(code);
+                  }
+                }
+              }
+            });
+          }
+        } catch (err) {
+          console.error('Erro ao escanear:', err);
+        }
+        
+        requestAnimationFrame(scanFrame);
+      };
+      
+      scanFrame();
+    })
+    .catch(err => {
+      console.error('Erro ao acessar câmera:', err);
+      resultDiv.innerHTML = `<span style="color: #dc2626;">✗ Erro ao acessar câmera: ${err.message}</span>`;
+      isScanning = false;
+    });
+}
+
+function stopNFeScanner() {
+  isScanning = false;
+  const video = document.getElementById('nfeVideo');
+  
+  if (video && video.srcObject) {
+    video.srcObject.getTracks().forEach(track => track.stop());
+  }
+}
+
+function processNFeBarcode(code) {
+  // Extrair informações da chave NFe
+  const uf = code.substring(0, 2);
+  const aaaa = code.substring(2, 6);
+  const mm = code.substring(6, 8);
+  const dd = code.substring(8, 10);
+  const cnpj = code.substring(10, 24);
+  const numero = code.substring(25, 34);
+  
+  // Criar modal para edição
+  const bodyHTML = `
+    <div style="background: #f0fdf4; padding: 15px; border-radius: 8px; margin-bottom: 15px; border-left: 4px solid #16a34a;">
+      <p style="font-size: 12px; color: #166534;"><strong>Chave NFe:</strong> ${code}</p>
+    </div>
+    
+    <div class="form-group">
+      <label>Número NFe</label>
+      <input type="text" id="nfeNumero" value="${numero}" class="form-input" placeholder="Número da NF-e">
+    </div>
+    
+    <div class="form-group">
+      <label>CNPJ Fornecedor</label>
+      <input type="text" id="nfeCNPJ" value="${cnpj}" class="form-input" placeholder="CNPJ do fornecedor">
+    </div>
+    
+    <div class="form-group">
+      <label>Nome do Fornecedor</label>
+      <input type="text" id="nfeFornecedor" value="" class="form-input" placeholder="Nome do fornecedor">
+    </div>
+    
+    <div class="form-group">
+      <label>Valor Total</label>
+      <input type="number" id="nfeValor" value="0" step="0.01" class="form-input" placeholder="0.00">
+    </div>
+    
+    <div class="form-group">
+      <label>Data Emissão</label>
+      <input type="date" id="nfeData" value="${aaaa}-${mm}-${dd}" class="form-input">
+    </div>
+  `;
+  
+  const footerHTML = `
+    <button class="btn" onclick="cancelNFeForm();" style="background: #64748b; color: white;">Cancelar</button>
+    <button class="btn" onclick="saveNFeFromBarcode('${code}');" style="background: #3b82f6; color: white;">Salvar</button>
+  `;
+  
+  openModal('Dados da NFe - Confirme as informações', bodyHTML, footerHTML);
+}
+
+function cancelNFeForm() {
+  closeModal();
+}
+
+async function saveNFeFromBarcode(chaveNFe) {
+  const numero = document.getElementById('nfeNumero').value;
+  const cnpj = document.getElementById('nfeCNPJ').value;
+  const fornecedor = document.getElementById('nfeFornecedor').value;
+  const valor = parseFloat(document.getElementById('nfeValor').value) || 0;
+  const data = document.getElementById('nfeData').value;
+  
+  if (!numero || !fornecedor || !data) {
+    showToast('Preencha todos os campos obrigatórios', 'error');
+    return;
+  }
+  
+  try {
+    const nfeData = {
+      numero,
+      chaveNFe,
+      cnpj,
+      fornecedor,
+      valorTotal: valor,
+      dataHora: new Date(data).toISOString(),
+      itens: [],
+      createdAt: new Date().toISOString()
+    };
+    
+    await db.ref('nfes').push().set(nfeData);
+    
+    showToast('NFe salva com sucesso!', 'success');
+    closeModal();
+    loadNFes();
+  } catch (error) {
+    console.error('Erro ao salvar NFe:', error);
+    showToast('Erro ao salvar NFe', 'error');
+  }
+}
+
+function viewNFeDetails(nfeId) {
+  const nfe = allNFes.find(n => n.id === nfeId);
+  
+  if (!nfe) {
+    showToast('NFe não encontrada', 'error');
+    return;
+  }
+  
+  const bodyHTML = `
+    <div style="background: #f8fafc; padding: 15px; border-radius: 8px; margin-bottom: 15px;">
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+        <div>
+          <p style="font-size: 12px; color: var(--text-muted); margin-bottom: 5px;">Número NFe</p>
+          <p style="font-weight: 700; font-size: 14px;">${nfe.numero}</p>
+        </div>
+        <div>
+          <p style="font-size: 12px; color: var(--text-muted); margin-bottom: 5px;">Chave NFe</p>
+          <p style="font-weight: 600; font-size: 13px; word-break: break-all;">${nfe.chaveNFe || 'N/A'}</p>
+        </div>
+        <div>
+          <p style="font-size: 12px; color: var(--text-muted); margin-bottom: 5px;">Fornecedor</p>
+          <p style="font-weight: 600; font-size: 14px;">${nfe.fornecedor}</p>
+        </div>
+        <div>
+          <p style="font-size: 12px; color: var(--text-muted); margin-bottom: 5px;">CNPJ</p>
+          <p style="font-weight: 600; font-size: 14px;">${nfe.cnpj || 'N/A'}</p>
+        </div>
+        <div>
+          <p style="font-size: 12px; color: var(--text-muted); margin-bottom: 5px;">Valor Total</p>
+          <p style="font-weight: 700; font-size: 16px; color: var(--primary-mid);">${formatMoney(nfe.valorTotal)}</p>
+        </div>
+        <div>
+          <p style="font-size: 12px; color: var(--text-muted); margin-bottom: 5px;">Data Emissão</p>
+          <p style="font-weight: 600; font-size: 14px;">${formatDate(nfe.dataHora)}</p>
+        </div>
+      </div>
+    </div>
+    
+    <div>
+      <h4 style="margin: 20px 0 10px 0; font-size: 14px; font-weight: 700;">Itens (${nfe.itens ? nfe.itens.length : 0})</h4>
+      ${nfe.itens && nfe.itens.length > 0 ? `
+        <div style="max-height: 300px; overflow-y: auto;">
+          ${nfe.itens.map((item, idx) => `
+            <div style="padding: 10px; background: #f1f5f9; border-radius: 5px; margin-bottom: 8px; font-size: 13px;">
+              <p style="margin: 0; font-weight: 600;">${idx + 1}. ${item.descricao}</p>
+              <p style="margin: 5px 0 0 0; color: var(--text-muted);">Qtd: ${item.quantidade} | Valor: ${formatMoney(item.valor)}</p>
+            </div>
+          `).join('')}
+        </div>
+      ` : '<p style="color: var(--text-muted); font-size: 13px;">Nenhum item cadastrado</p>'}
+    </div>
+  `;
+  
+  const footerHTML = `
+    <button class="btn" onclick="closeModal();" style="background: #64748b; color: white;">Fechar</button>
+  `;
+  
+  openModal(`Detalhes NFe #${nfe.numero}`, bodyHTML, footerHTML);
+}
+
+async function editNFe(nfeId) {
+  const nfe = allNFes.find(n => n.id === nfeId);
+  
+  if (!nfe) {
+    showToast('NFe não encontrada', 'error');
+    return;
+  }
+  
+  const bodyHTML = `
+    <div class="form-group">
+      <label>Número NFe</label>
+      <input type="text" id="editNumero" value="${nfe.numero}" class="form-input">
+    </div>
+    
+    <div class="form-group">
+      <label>Fornecedor</label>
+      <input type="text" id="editFornecedor" value="${nfe.fornecedor}" class="form-input">
+    </div>
+    
+    <div class="form-group">
+      <label>CNPJ</label>
+      <input type="text" id="editCNPJ" value="${nfe.cnpj || ''}" class="form-input">
+    </div>
+    
+    <div class="form-group">
+      <label>Valor Total</label>
+      <input type="number" id="editValor" value="${nfe.valorTotal}" step="0.01" class="form-input">
+    </div>
+    
+    <div class="form-group">
+      <label>Data</label>
+      <input type="date" id="editData" value="${nfe.dataHora.split('T')[0]}" class="form-input">
+    </div>
+  `;
+  
+  const footerHTML = `
+    <button class="btn" onclick="closeModal();" style="background: #64748b; color: white;">Cancelar</button>
+    <button class="btn" onclick="updateNFe('${nfeId}');" style="background: #3b82f6; color: white;">Atualizar</button>
+  `;
+  
+  openModal(`Editar NFe #${nfe.numero}`, bodyHTML, footerHTML);
+}
+
+async function updateNFe(nfeId) {
+  const numero = document.getElementById('editNumero').value;
+  const fornecedor = document.getElementById('editFornecedor').value;
+  const cnpj = document.getElementById('editCNPJ').value;
+  const valor = parseFloat(document.getElementById('editValor').value);
+  const data = document.getElementById('editData').value;
+  
+  if (!numero || !fornecedor || !data) {
+    showToast('Preencha todos os campos', 'error');
+    return;
+  }
+  
+  try {
+    await db.ref('nfes/' + nfeId).update({
+      numero,
+      fornecedor,
+      cnpj,
+      valorTotal: valor,
+      dataHora: new Date(data).toISOString()
+    });
+    
+    showToast('NFe atualizada com sucesso!', 'success');
+    closeModal();
+    loadNFes();
+  } catch (error) {
+    console.error('Erro ao atualizar NFe:', error);
+    showToast('Erro ao atualizar NFe', 'error');
+  }
+}
+
+async function deleteNFe(nfeId) {
+  if (!confirm('Tem certeza que deseja excluir esta NFe?')) return;
+  
+  try {
+    await db.ref('nfes/' + nfeId).remove();
+    showToast('NFe excluída com sucesso!', 'success');
+    loadNFes();
+  } catch (error) {
+    console.error('Erro ao deletar NFe:', error);
+    showToast('Erro ao excluir NFe', 'error');
+  }
+}
+
+// Funções auxiliares
+function formatDate(dateString) {
+  try {
+    const date = new Date(dateString);
+    return date.toLocaleDateString('pt-BR');
+  } catch {
+    return 'Data inválida';
+  }
+}
+
+function formatMoney(value) {
+  return new Intl.NumberFormat('pt-BR', {
+    style: 'currency',
+    currency: 'BRL'
+  }).format(value || 0);
+}
+
+function showToast(message, type = 'info') {
+  const toast = document.createElement('div');
+  toast.style.cssText = `
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    padding: 12px 16px;
+    border-radius: 6px;
+    background: ${type === 'error' ? '#dc2626' : type === 'success' ? '#16a34a' : '#3b82f6'};
+    color: white;
+    z-index: 9999;
+    font-size: 14px;
+    animation: slideIn 0.3s ease-out;
+  `;
+  toast.textContent = message;
+  document.body.appendChild(toast);
+  
+  setTimeout(() => toast.remove(), 3000);
+}
+
+// Carregar NFes quando página carrega
+document.addEventListener('DOMContentLoaded', () => {
+  setTimeout(loadNFes, 1000);
+});
+
+
     
     function startBarcodeScanner() {
       quaggaInstance = true;
